@@ -21,6 +21,9 @@ struct AcronymsController: RouteCollection {
         acronymsRoutes.on(.GET, "first", use: getFirstHandler(_:))
         acronymsRoutes.on(.GET, "sorted", use: sortingHandler(_:))
         acronymsRoutes.on(.GET, ":acronymID", "user", use: getUserHandler(_:))
+        acronymsRoutes.on(.POST, ":acronymID", "categories", ":categoryID", use: addCategoriesHandler(_:))
+        acronymsRoutes.on(.GET, ":acronymID", "categories", use: getCategoriesHandler(_:))
+        acronymsRoutes.on(.DELETE, ":acronymID", "categories", ":categoryID", use: removeCategoriesHandler(_:))
     }
     
     func getAllHandler(_ req: Request) async throws -> [Acronym] {
@@ -111,6 +114,36 @@ struct AcronymsController: RouteCollection {
         let user = try await acronym.$user.get(on: req.db)
         return user
     }
+    
+    private func getCategoryHandlerById(_ req: Request) async throws -> Category {
+        guard let data = try await Category.find(
+            req.parameters.get("categoryID"),
+            on: req.db)
+        else { throw Abort(.notFound) }
+        return data
+    }
+    
+    func addCategoriesHandler(_ req: Request) async throws -> HTTPStatus {
+        let acronymQuery = try await getHandlerById(req)
+        let categoryQuery = try await getCategoryHandlerById(req)
+        
+        try await acronymQuery.$categories.attach(categoryQuery, on: req.db)
+        return .created
+    }
+    
+    func getCategoriesHandler(_ req: Request) async throws -> [Category] {
+        let acronymQuery = try await getHandlerById(req)
+        let allData = try await acronymQuery.$categories.query(on: req.db).all()
+        return allData
+    }
+    
+    func removeCategoriesHandler(_ req: Request) async throws -> HTTPStatus {
+        let acronymQuery = try await getHandlerById(req)
+        let categoryQuery = try await getCategoryHandlerById(req)
+        try await acronymQuery.$categories.detach(categoryQuery, on: req.db)
+        return .noContent
+    }
+
 }
 
 struct CreateAcronymData: Content {
