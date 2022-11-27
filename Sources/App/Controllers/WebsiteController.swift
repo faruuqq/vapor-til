@@ -100,7 +100,56 @@ struct WebsiteController: RouteCollection {
         guard let id = acronym.id else {
             throw Abort(.internalServerError)
         }
+        
+//        for await category in data.categories ?? [] {
+//            
+//        }
+
         return req.redirect(to: "/acronyms/\(id)")
+        /*
+         func getAllSof() async -> [SOFV3ListOfAcctSof] {
+             var allSofs: [SOFV3ListOfAcctSof] = []
+             await withTaskGroup(of: [SOFV3ListOfAcctSof].self, body: { group in
+                 for allowed in allowedSOF {
+                     group.addTask { [weak self] in
+                         guard let self = self else { return [] }
+                         return await self.getSOF(with: allowed.parameter, onAccountError: allowed)
+                     }
+                 }
+                 
+                 for await sofs in group {
+                     allSofs.append(contentsOf: sofs)
+                 }
+             })
+             return allSofs
+         }
+         
+         
+         let data = try req.content.decode(CreateAcronymFormData.self)
+         let acronym = Acronym(short: data.short, long: data.long, userID: data.userID)
+         return acronym.save(on: req.db).flatMap {
+           guard let id = acronym.id else {
+             return req.eventLoop.future(error: Abort(.internalServerError))
+           }
+           var categorySaves: [EventLoopFuture<Void>] = []
+           for category in data.categories ?? [] {
+             categorySaves.append(Category.addCategory(category, to: acronym, on: req))
+           }
+           let redirect = req.redirect(to: "/acronyms/\(id)")
+           return categorySaves.flatten(on: req.eventLoop).transform(to: redirect)
+         }
+         
+         let quakes = AsyncStream(Quake.self) { continuation in
+             let monitor = QuakeMonitor()
+             monitor.quakeHandler = { quake in
+                 continuation.yield(quake)
+             }
+             continuation.onTermination = { @Sendable _ in
+                 monitor.stopMonitoring()
+             }
+             monitor.startMonitoring()
+         }
+         */
     }
     
     func editAcronymHandler(_ req: Request) async throws -> View {
