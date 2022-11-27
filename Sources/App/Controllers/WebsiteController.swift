@@ -32,11 +32,13 @@ struct WebsiteController: RouteCollection {
     
     func acronymHandler(_ req: Request) async throws -> View {
         if let acronym = try await Acronym.find(req.parameters.get("acronymID"), on: req.db) {
+            let categories = try await acronym.$categories.query(on: req.db).all()
             let user = try await acronym.$user.get(on: req.db)
             let context = AcronymContext(
                 title: acronym.short,
                 acronym: acronym,
-                user: user)
+                user: user,
+                category: categories)
             return try await req.view.render("acronym", context)
         } else {
             throw Abort(.notFound)
@@ -100,64 +102,20 @@ struct WebsiteController: RouteCollection {
         guard let id = acronym.id else {
             throw Abort(.internalServerError)
         }
-        
-//        for await category in data.categories ?? [] {
-//            
-//        }
-
+        for category in data.categories ?? [] {
+            try await Category.addCategory(category, to: acronym, on: req)
+        }
         return req.redirect(to: "/acronyms/\(id)")
-        /*
-         func getAllSof() async -> [SOFV3ListOfAcctSof] {
-             var allSofs: [SOFV3ListOfAcctSof] = []
-             await withTaskGroup(of: [SOFV3ListOfAcctSof].self, body: { group in
-                 for allowed in allowedSOF {
-                     group.addTask { [weak self] in
-                         guard let self = self else { return [] }
-                         return await self.getSOF(with: allowed.parameter, onAccountError: allowed)
-                     }
-                 }
-                 
-                 for await sofs in group {
-                     allSofs.append(contentsOf: sofs)
-                 }
-             })
-             return allSofs
-         }
-         
-         
-         let data = try req.content.decode(CreateAcronymFormData.self)
-         let acronym = Acronym(short: data.short, long: data.long, userID: data.userID)
-         return acronym.save(on: req.db).flatMap {
-           guard let id = acronym.id else {
-             return req.eventLoop.future(error: Abort(.internalServerError))
-           }
-           var categorySaves: [EventLoopFuture<Void>] = []
-           for category in data.categories ?? [] {
-             categorySaves.append(Category.addCategory(category, to: acronym, on: req))
-           }
-           let redirect = req.redirect(to: "/acronyms/\(id)")
-           return categorySaves.flatten(on: req.eventLoop).transform(to: redirect)
-         }
-         
-         let quakes = AsyncStream(Quake.self) { continuation in
-             let monitor = QuakeMonitor()
-             monitor.quakeHandler = { quake in
-                 continuation.yield(quake)
-             }
-             continuation.onTermination = { @Sendable _ in
-                 monitor.stopMonitoring()
-             }
-             monitor.startMonitoring()
-         }
-         */
     }
     
     func editAcronymHandler(_ req: Request) async throws -> View {
         if let acronym = try await Acronym.find(req.parameters.get("acronymID"), on: req.db) {
             let users = try await User.query(on: req.db).all()
+            let categories = try await acronym.$categories.query(on: req.db).all()
             let context = EditAcronymContext(
                 acronym: acronym,
-                users: users)
+                users: users,
+                categories: categories)
             return try await req.view.render("createAcronym", context)
         } else {
             throw Abort(.notFound)
@@ -174,6 +132,27 @@ struct WebsiteController: RouteCollection {
                 throw Abort(.internalServerError)
             }
             try await acronym.save(on: req.db)
+            
+            let existingCategories = try await acronym.$categories.query(on: req.db).all()
+            let existingStringArray = existingCategories.map { $0.name }
+            
+            let existingSet = Set<String>(existingStringArray)
+            let newSet = Set<String>(updateData.categories ?? [])
+            
+            let categoriesToAdd = newSet.subtracting(existingSet)
+            let categoriesToRemove = existingSet.subtracting(newSet)
+            
+            for newCategory in categoriesToAdd {
+                try await Category.addCategory(newCategory, to: acronym, on: req)
+            }
+            
+            for categoryNameToRemove in categoriesToRemove {
+                let categoryToRemove = existingCategories.first { $0.name == categoryNameToRemove }
+                if let category = categoryToRemove {
+                    try await acronym.$categories.detach(category, on: req.db)
+                }
+            }
+            
             return req.redirect(to: "/acronyms/\(id)")
         } else {
             throw Abort(.notFound)
@@ -199,6 +178,7 @@ struct WebsiteController: RouteCollection {
         let title: String
         let acronym: Acronym
         let user: User
+        let category: [Category]
     }
     
     struct UserContext: Encodable {
@@ -233,6 +213,7 @@ struct WebsiteController: RouteCollection {
         let acronym: Acronym
         let users: [User]
         let editing = true
+        let categories: [Category]
     }
     
     struct CreateAcronymData: Content {
