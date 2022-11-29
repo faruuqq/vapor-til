@@ -11,6 +11,7 @@ import XCTVapor
 final class UserTests: XCTestCase {
     let usersName = "Alice"
     let usersUsername = "alicea"
+    let usersPassword = "userpass"
     let usersURL = "api/users/"
     var app: Application!
     
@@ -31,7 +32,7 @@ final class UserTests: XCTestCase {
         
         try app.test(.GET, usersURL, afterResponse: { response in
             XCTAssertEqual(response.status, .ok)
-            let users = try response.content.decode([User].self)
+            let users = try response.content.decode([User.Public].self)
             
             XCTAssertEqual(users.count, 2)
             XCTAssertEqual(users[0].name, usersName)
@@ -41,18 +42,18 @@ final class UserTests: XCTestCase {
     }
     
     func testUserCanBeSavedWithAPI() throws {
-        let user = User(name: usersName, username: usersUsername)
+        let user = User(name: usersName, username: usersUsername, password: usersPassword)
         try app.test(.POST, usersURL, beforeRequest: { req in
             try req.content.encode(user)
         }, afterResponse: { response in
-            let receivedUser = try response.content.decode(User.self)
+            let receivedUser = try response.content.decode(User.Public.self)
             
             XCTAssertEqual(receivedUser.name, usersName)
             XCTAssertEqual(receivedUser.username, usersUsername)
             XCTAssertNotNil(receivedUser.id)
             
             try app.test(.GET, usersURL, afterResponse: { secondResponse in
-                let users = try secondResponse.content.decode([User].self)
+                let users = try secondResponse.content.decode([User.Public].self)
                 
                 XCTAssertEqual(users.count, 1)
                 XCTAssertEqual(users[0].name, usersName)

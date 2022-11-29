@@ -43,8 +43,7 @@ final class AcronymTests: XCTestCase {
         let user = try User.create(on: app.db)
         let acronym = CreateAcronymData(
             short: acronymShort,
-            long: acronymLong,
-            userID: user.id!)
+            long: acronymLong)
         try app.test(.POST, acronymsURI, beforeRequest: { req in
             try req.content.encode(acronym)
         }, afterResponse: { response in
@@ -89,8 +88,7 @@ final class AcronymTests: XCTestCase {
         let newLong = "New long"
         let updatedAcronymData = CreateAcronymData(
             short: acronymShort,
-            long: newLong,
-            userID: user.id!)
+            long: newLong)
         
         try app.test(.PUT, "\(acronymsURI)\(acronym.id!)", beforeRequest: { req in
             try req.content.encode(updatedAcronymData)
