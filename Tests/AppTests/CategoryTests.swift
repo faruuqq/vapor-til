@@ -38,17 +38,15 @@ final class CategoryTests: XCTestCase {
     
     func testCategoryCanBeSavedWithAPI() throws {
         let category = Category(name: categoryName)
-        try app.test(.POST, categoryURL, beforeRequest: { req in
+        try app.test(.POST, categoryURL, loggedInRequest: true, beforeRequest: { req in
             try req.content.encode(category)
         }, afterResponse: { response in
-            let receivedCategory = try response.content.decode(App.Category.self)
-            
+            let receivedCategory = try response.content.decode(Category.self)
             XCTAssertEqual(receivedCategory.name, categoryName)
             XCTAssertNotNil(receivedCategory.id)
             
             try app.test(.GET, categoryURL, afterResponse: { secondResponse in
                 let categories = try secondResponse.content.decode([App.Category].self)
-                
                 XCTAssertEqual(categories.count, 1)
                 XCTAssertEqual(categories[0].name, categoryName)
                 XCTAssertEqual(categories[0].id, receivedCategory.id)
@@ -81,8 +79,8 @@ final class CategoryTests: XCTestCase {
             on: app.db)
         let acronym2 = try Acronym.create(on: app.db)
         
-        try app.test(.POST, "/api/acronyms/\(acronym1.id!)/categories/\(category.id!)")
-        try app.test(.POST, "/api/acronyms/\(acronym2.id!)/categories/\(category.id!)")
+        try app.test(.POST, "/api/acronyms/\(acronym1.id!)/categories/\(category.id!)", loggedInRequest: true)
+        try app.test(.POST, "/api/acronyms/\(acronym2.id!)/categories/\(category.id!)", loggedInRequest: true)
         
         try app.test(.GET, "\(categoryURL)\(category.id!)/acronyms", afterResponse: { response in
             let acronyms = try response.content.decode([Acronym].self)

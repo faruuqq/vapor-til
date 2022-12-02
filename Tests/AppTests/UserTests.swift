@@ -11,7 +11,7 @@ import XCTVapor
 final class UserTests: XCTestCase {
     let usersName = "Alice"
     let usersUsername = "alicea"
-    let usersPassword = "userpass"
+    let usersPassword = "password"
     let usersURL = "api/users/"
     var app: Application!
     
@@ -34,16 +34,16 @@ final class UserTests: XCTestCase {
             XCTAssertEqual(response.status, .ok)
             let users = try response.content.decode([User.Public].self)
             
-            XCTAssertEqual(users.count, 2)
-            XCTAssertEqual(users[0].name, usersName)
-            XCTAssertEqual(users[0].username, usersUsername)
-            XCTAssertEqual(users[0].id, user.id)
+            XCTAssertEqual(users.count, 3)
+            XCTAssertEqual(users[1].name, usersName)
+            XCTAssertEqual(users[1].username, usersUsername)
+            XCTAssertEqual(users[1].id, user.id)
         })
     }
     
     func testUserCanBeSavedWithAPI() throws {
         let user = User(name: usersName, username: usersUsername, password: usersPassword)
-        try app.test(.POST, usersURL, beforeRequest: { req in
+        try app.test(.POST, usersURL, loggedInRequest: true, beforeRequest: { req in
             try req.content.encode(user)
         }, afterResponse: { response in
             let receivedUser = try response.content.decode(User.Public.self)
@@ -55,10 +55,10 @@ final class UserTests: XCTestCase {
             try app.test(.GET, usersURL, afterResponse: { secondResponse in
                 let users = try secondResponse.content.decode([User.Public].self)
                 
-                XCTAssertEqual(users.count, 1)
-                XCTAssertEqual(users[0].name, usersName)
-                XCTAssertEqual(users[0].username, usersUsername)
-                XCTAssertEqual(users[0].id, receivedUser.id)
+                XCTAssertEqual(users.count, 2)
+                XCTAssertEqual(users[1].name, usersName)
+                XCTAssertEqual(users[1].username, usersUsername)
+                XCTAssertEqual(users[1].id, receivedUser.id)
             })
         })
     }
@@ -70,7 +70,7 @@ final class UserTests: XCTestCase {
             on: app.db)
         
         try app.test(.GET, "\(usersURL)\(user.id!)", afterResponse: { response in
-            let receivedUser = try response.content.decode(User.self)
+            let receivedUser = try response.content.decode(User.Public.self)
             
             XCTAssertEqual(receivedUser.name, usersName)
             XCTAssertEqual(receivedUser.username, usersUsername)
