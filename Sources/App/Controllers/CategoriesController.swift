@@ -10,10 +10,14 @@ import Vapor
 struct CategoriesController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
         let categoriesRoute = routes.grouped("api", "categories")
-        categoriesRoute.on(.POST, use: createHandler(_:))
         categoriesRoute.on(.GET, use: getAllHandler(_:))
         categoriesRoute.on(.GET, ":categoryID", use: getHandler(_:))
         categoriesRoute.on(.GET, ":categoryID", "acronyms", use: getAcronymsHandler(_:))
+        
+        let tokenAuthMiddleware = Token.authenticator()
+        let guardAuthMiddleware = User.guardMiddleware()
+        let tokenAuthGroup = categoriesRoute.grouped(tokenAuthMiddleware, guardAuthMiddleware)
+        tokenAuthGroup.post(use: createHandler(_:))
     }
     
     func createHandler(_ req: Request) async throws -> Category {

@@ -49,7 +49,7 @@ struct WebsiteController: RouteCollection {
         if let user = try await User.find(req.parameters.get("userID"), on: req.db) {
             let acronyms = try await user.$acronyms.get(on: req.db)
             let context = UserContext(
-                title: user.name ?? "null",
+                title: user.name,
                 user: user,
                 acronyms: acronyms)
             return try await req.view.render("user", context)
