@@ -10,23 +10,37 @@ import Leaf
 
 struct WebsiteController: RouteCollection {
     func boot(routes: Vapor.RoutesBuilder) throws {
-        routes.on(.GET, use: indexHandler(_:))
-        routes.on(.GET, "acronyms", ":acronymID", use: acronymHandler(_:))
-        routes.on(.GET, "users", ":userID", use: userHandler(_:))
-        routes.on(.GET, "users", use: allUsersHandler(_:))
-        routes.on(.GET, "categories", use: allCategoriesHandler(_:))
-        routes.on(.GET, "categories", ":categoryID", use: categoryHandler(_:))
-        routes.on(.GET, "acronyms", "create", use: createAcronymHandler(_:))
-        routes.on(.POST, "acronyms", "create", use: createAcronymPostHandler(_:))
-        routes.on(.GET, "acronyms", ":acronymID", "edit", use: editAcronymHandler(_:))
-        routes.on(.POST, "acronyms", ":acronymID", "edit", use: editAcronymPostHandler(_:))
-        routes.on(.POST, "acronyms", ":acronymID", "delete", use: deleteAcronymHandler(_:))
+        let authSessionRoutes = routes.grouped(User.sessionAuthenticator())
+        authSessionRoutes.on(.GET, "login", use: loginHandler(_:))
+        let credentialsAuthRoutes = authSessionRoutes.grouped(User.credentialsAuthenticator())
+        credentialsAuthRoutes.on(.POST, "login", use: loginPostHandler(_:))
+        authSessionRoutes.on(.POST, "logout", use: logoutHandler(_:))
+        
+        authSessionRoutes.on(.GET, use: indexHandler(_:))
+        authSessionRoutes.on(.GET, "acronyms", ":acronymID", use: acronymHandler(_:))
+        authSessionRoutes.on(.GET, "users", ":userID", use: userHandler(_:))
+        authSessionRoutes.on(.GET, "users", use: allUsersHandler(_:))
+        authSessionRoutes.on(.GET, "categories", use: allCategoriesHandler(_:))
+        authSessionRoutes.on(.GET, "categories", ":categoryID", use: categoryHandler(_:))
+        
+        let protectedRoutes = authSessionRoutes.grouped(User.redirectMiddleware(path: "/login"))
+        protectedRoutes.on(.GET, "acronyms", "create", use: createAcronymHandler(_:))
+        protectedRoutes.on(.POST, "acronyms", "create", use: createAcronymPostHandler(_:))
+        protectedRoutes.on(.GET, "acronyms", ":acronymID", "edit", use: editAcronymHandler(_:))
+        protectedRoutes.on(.POST, "acronyms", ":acronymID", "edit", use: editAcronymPostHandler(_:))
+        protectedRoutes.on(.POST, "acronyms", ":acronymID", "delete", use: deleteAcronymHandler(_:))
     }
     
     // MARK: - Function Get Context
     func indexHandler(_ req: Request) async throws -> View {
         let acronym = try await Acronym.query(on: req.db).all()
-        let context = IndexContext(title: "Home page", acronyms: acronym)
+        let userLoggedIn = req.auth.has(User.self)
+        let showCookieMessage = req.cookies["cookies-accepted"] == nil
+        let context = IndexContext(
+            title: "Home page",
+            acronyms: acronym,
+            userLoggedIn: userLoggedIn,
+            showCookieMessage: showCookieMessage)
         return try await req.view.render("index", context)
     }
     
@@ -87,17 +101,25 @@ struct WebsiteController: RouteCollection {
     
     // MARK: - Function Create, Edit, Delete Context
     func createAcronymHandler(_ req: Request) async throws -> View {
-        let users = try await User.query(on: req.db).all()
-        let context = CreateAcronymContext(users: users)
+        let token = [UInt8].random(count: 16).base64
+        let context = CreateAcronymContext(csrfToken: token)
+        req.session.data["CSRF_TOKEN"] = token
         return try await req.view.render("createAcronym", context)
     }
     
     func createAcronymPostHandler(_ req: Request) async throws -> Response {
-        let data = try req.content.decode(CreateAcronymData.self)
+        let data = try req.content.decode(CreateAcronymFormData.self)
+        let user = try req.auth.require(User.self)
+        let expectedToken = req.session.data["CSRF_TOKEN"]
+        req.session.data["CSRF_TOKEN"] = nil
+        guard let csrfToken = data.csrfToken,
+              expectedToken == csrfToken else {
+            throw Abort(.badRequest)
+        }
         let acronym = Acronym(
             short: data.short,
             long: data.long,
-            userID: data.userID)
+            userID: try user.requireID())
         try await acronym.save(on: req.db)
         guard let id = acronym.id else {
             throw Abort(.internalServerError)
@@ -114,11 +136,9 @@ struct WebsiteController: RouteCollection {
     
     func editAcronymHandler(_ req: Request) async throws -> View {
         if let acronym = try await Acronym.find(req.parameters.get("acronymID"), on: req.db) {
-            let users = try await User.query(on: req.db).all()
             let categories = try await acronym.$categories.query(on: req.db).all()
             let context = EditAcronymContext(
                 acronym: acronym,
-                users: users,
                 categories: categories)
             return try await req.view.render("createAcronym", context)
         } else {
@@ -127,13 +147,15 @@ struct WebsiteController: RouteCollection {
     }
     
     func editAcronymPostHandler(_ req: Request) async throws -> Response {
-        let updateData = try req.content.decode(CreateAcronymData.self)
+        let user = try req.auth.require(User.self)
+        let userID = try user.requireID()
+        let updateData = try req.content.decode(CreateAcronymFormData.self)
         guard let acronym = try await Acronym.find(req.parameters.get("acronymID"), on: req.db) else {
             throw Abort(.notFound)
         }
         acronym.short = updateData.short
         acronym.long = updateData.long
-        acronym.$user.id = updateData.userID
+        acronym.$user.id = userID
         let id = try acronym.requireID()
         try await acronym.save(on: req.db)
         let existingCategories = try await acronym.$categories.get(on: req.db)
@@ -168,58 +190,97 @@ struct WebsiteController: RouteCollection {
         }
     }
     
-    // MARK: - Struct Context
-    struct IndexContext: Encodable {
-        let title: String
-        let acronyms: [Acronym]
+    func loginHandler(_ req: Request) async throws -> View {
+        let context: LoginContext
+        if let error = req.query[Bool.self, at: "error"], error {
+            context = LoginContext(loginError: true)
+        } else {
+            context = LoginContext()
+        }
+        return try await req.view.render("login", context)
     }
     
-    struct AcronymContext: Encodable {
-        let title: String
-        let acronym: Acronym
-        let user: User
-        let categories: [Category]
+    func loginPostHandler(_ req: Request) async throws -> Response {
+        if req.auth.has(User.self) {
+            return req.redirect(to: "/")
+        } else {
+            let context = LoginContext(loginError: true)
+            return try await req.view.render("login", context).encodeResponse(for: req).get()
+        }
     }
     
-    struct UserContext: Encodable {
-        let title: String
-        let user: User
-        let acronyms: [Acronym]
+    func logoutHandler(_ req: Request) throws -> Response {
+        req.auth.logout(User.self)
+        return req.redirect(to: "/")
     }
+}
+
+// MARK: - Struct Context
+struct IndexContext: Encodable {
+    let title: String
+    let acronyms: [Acronym]
+    let userLoggedIn: Bool
+    let showCookieMessage: Bool
+}
+
+struct AcronymContext: Encodable {
+    let title: String
+    let acronym: Acronym
+    let user: User
+    let categories: [Category]
+}
+
+struct UserContext: Encodable {
+    let title: String
+    let user: User
+    let acronyms: [Acronym]
+}
+
+struct AllUsersContext: Encodable {
+    let title: String
+    let users: [User]
+}
+
+struct AllCategories: Encodable {
+    let title = "All Categories"
+    let categories: [Category]
+}
+
+struct CategoryContext: Encodable {
+    let title: String
+    let category: Category
+    let acronyms: [Acronym]
+}
+
+// MARK: - Struct Create & Edit Context
+struct CreateAcronymContext: Encodable {
+    let title = "Create An Acronym"
+    let csrfToken: String
+}
+struct EditAcronymContext: Encodable {
+    let title = "Edit Acronym"
+    let acronym: Acronym
+    let editing = true
+    let categories: [Category]
+}
+
+struct CreateAcronymFormData: Content {
+    let short: String
+    let long: String
+    let categories: [String]?
+    let csrfToken: String?
+}
+
+struct LoginContext: Encodable {
+    let title = "Log In"
+    let loginError: Bool
     
-    struct AllUsersContext: Encodable {
-        let title: String
-        let users: [User]
+    init(loginError: Bool = false) {
+        self.loginError = loginError
     }
-    
-    struct AllCategories: Encodable {
-        let title = "All Categories"
-        let categories: [Category]
-    }
-    
-    struct CategoryContext: Encodable {
-        let title: String
-        let category: Category
-        let acronyms: [Acronym]
-    }
-    
-    // MARK: - Struct Create & Edit Context
-    struct CreateAcronymContext: Encodable {
-        let title = "Create An Acronym"
-        let users: [User]
-    }
-    struct EditAcronymContext: Encodable {
-        let title = "Edit Acronym"
-        let acronym: Acronym
-        let users: [User]
-        let editing = true
-        let categories: [Category]
-    }
-    
-    struct CreateAcronymData: Content {
-        let userID: UUID
-        let short: String
-        let long: String
-        let categories: [String]?
-    }
+}
+
+struct LoginPostData: Content {
+    let username: String
+    let password: String
 }

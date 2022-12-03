@@ -75,3 +75,9 @@ extension User: ModelAuthenticatable {
         try Bcrypt.verify(password, created: self.password)
     }
 }
+
+// MARK: - ModelSessionAuthenticatable
+extension User: ModelSessionAuthenticatable {}
+
+// MARK: - ModelCredentialsAuthenticatable
+extension User: ModelCredentialsAuthenticatable {}
