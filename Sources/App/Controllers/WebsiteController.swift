@@ -15,6 +15,8 @@ struct WebsiteController: RouteCollection {
         let credentialsAuthRoutes = authSessionRoutes.grouped(User.credentialsAuthenticator())
         credentialsAuthRoutes.on(.POST, "login", use: loginPostHandler(_:))
         authSessionRoutes.on(.POST, "logout", use: logoutHandler(_:))
+        authSessionRoutes.on(.GET, "register", use: registerHandler(_:))
+        authSessionRoutes.on(.POST, "register", use: registerPostHandler(_:))
         
         authSessionRoutes.on(.GET, use: indexHandler(_:))
         authSessionRoutes.on(.GET, "acronyms", ":acronymID", use: acronymHandler(_:))
@@ -130,7 +132,7 @@ struct WebsiteController: RouteCollection {
                 try await Category.addCategory(category, to: acronym, on: req)
             }
         }
-
+        
         return req.redirect(to: "/acronyms/\(id)")
     }
     
@@ -213,6 +215,43 @@ struct WebsiteController: RouteCollection {
         req.auth.logout(User.self)
         return req.redirect(to: "/")
     }
+    
+    func registerHandler(_ req: Request) async throws -> View {
+        let context: RegisterContext
+        if let message = req.query[String.self, at: "message"] {
+            context = RegisterContext(message: message)
+        } else {
+            context = RegisterContext()
+        }
+        return try await req.view.render("register", context)
+    }
+    
+    func registerPostHandler(_ req: Request) async throws -> Response {
+        do {
+            try RegisterData.validate(content: req)
+        } catch let error {
+            let redirect: String
+            if let error = error as? ValidationsError,
+               let message = error.description.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+                redirect = "/register?message=\(message)"
+            } else {
+                redirect = "/register?message=Unknown+error"
+            }
+            return req.redirect(to: redirect)
+        }
+        let data = try req.content.decode(RegisterData.self)
+        guard data.password == data.confirmPassword else {
+            throw Abort(.badRequest, reason: "Password did not match")
+        }
+        let password = try Bcrypt.hash(data.password)
+        let user = User(
+            name: data.name,
+            username: data.username,
+            password: password)
+        try await user.save(on: req.db)
+        req.auth.login(user)
+        return req.redirect(to: "/")
+    }
 }
 
 // MARK: - Struct Context
@@ -283,4 +322,29 @@ struct LoginContext: Encodable {
 struct LoginPostData: Content {
     let username: String
     let password: String
+}
+
+struct RegisterContext: Encodable {
+    let title = "Register"
+    let message: String?
+    
+    init(message: String? = nil) {
+        self.message = message
+    }
+}
+
+struct RegisterData: Content {
+    let name: String
+    let username: String
+    let password: String
+    let confirmPassword: String
+}
+
+// MARK: - RegisterData
+extension RegisterData: Validatable {
+    static func validations(_ validations: inout Vapor.Validations) {
+        validations.add("name", as: String.self, is: .ascii)
+        validations.add("username", as: String.self, is: .alphanumeric && .count(3...))
+        validations.add("password", as: String.self, is: .count(8...))
+    }
 }
