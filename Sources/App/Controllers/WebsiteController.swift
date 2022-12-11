@@ -7,6 +7,7 @@
 
 import Vapor
 import Leaf
+import SendGrid
 
 struct WebsiteController: RouteCollection {
     func boot(routes: Vapor.RoutesBuilder) throws {
@@ -24,6 +25,10 @@ struct WebsiteController: RouteCollection {
         authSessionRoutes.on(.GET, "users", use: allUsersHandler(_:))
         authSessionRoutes.on(.GET, "categories", use: allCategoriesHandler(_:))
         authSessionRoutes.on(.GET, "categories", ":categoryID", use: categoryHandler(_:))
+        authSessionRoutes.on(.GET, "forgottenPassword", use: forgottenPasswordHandler(_:))
+        authSessionRoutes.on(.POST, "forgottenPassword", use: forgottenPasswordPostHandler(_:))
+        authSessionRoutes.on(.GET, "resetPassword", use: resetPasswordHandler(_:))
+        authSessionRoutes.on(.POST, "resetPassword", use: resetPasswordPostHandler(_:))
         
         let protectedRoutes = authSessionRoutes.grouped(User.redirectMiddleware(path: "/login"))
         protectedRoutes.on(.GET, "acronyms", "create", use: createAcronymHandler(_:))
@@ -247,10 +252,92 @@ struct WebsiteController: RouteCollection {
         let user = User(
             name: data.name,
             username: data.username,
-            password: password)
+            password: password,
+            email: data.emailAddress)
         try await user.save(on: req.db)
         req.auth.login(user)
         return req.redirect(to: "/")
+    }
+    
+    func forgottenPasswordHandler(_ req: Request) async throws -> View {
+        let context = [
+            "title": "Reset Your Password"
+        ]
+        return try await req.view.render("forgottenPassword", context)
+    }
+    
+    func forgottenPasswordPostHandler(_ req: Request) async throws -> View {
+        let emailBody = try req.content.get(String.self, at: "email")
+        var user: User?
+        guard let user = try await User.query(on: req.db).all()
+            .first(where: { $0.email == emailBody }) else {
+            let context = ForgotPasswordContext(title: "Password Reset Email Sent", user: user)
+            return try await req.view.render("forgottenPasswordConfirmed", context)
+        }
+        
+        let resetTokenString = [UInt8].random(count: 32).base64
+        print("--faruuq: reset token is", resetTokenString)
+        let resetToken = try ResetPasswordToken(value: resetTokenString, userID: user.requireID())
+        try await resetToken.save(on: req.db)
+        
+        let emailContent = """
+            <p>You've requested to reset your password. <a
+              href="http://localhost:8080/resetPassword?\
+              token=\(resetTokenString)">
+              Click here</a> to reset your password.</p>
+        """
+        
+        let emailAddress = EmailAddress(
+            email: user.email,
+            name: user.name)
+        let fromEmail = EmailAddress(
+            email: "pow-tannest0r@icloud.com",
+            name: "Faruuq")
+        let emailConfig = Personalization(
+            to: [emailAddress],
+            subject: "Reset Your Password")
+        let email = SendGridEmail(
+            personalizations: [emailConfig],
+            from: fromEmail,
+            content: [
+                ["type": "text/html",
+                 "value": emailContent]
+            ])
+        
+        try await req.application.sendgrid.client.send(email: email)
+        let context = ForgotPasswordContext(title: "Password Reset Email Sent", user: user)
+        return try await req.view.render("forgottenPasswordConfirmed", context)
+    }
+    
+    func resetPasswordHandler(_ req: Request) async throws -> View {
+        guard let token = req.query[String.self, at: "token"] else {
+            return try await req.view.render("resetPassword", ResetPasswordContext(error: true))
+        }
+        print("--faruuq: token is", token)
+        guard let existingToken = try await ResetPasswordToken.query(on: req.db)
+            .all()
+            .first(where: { $0.value == token }) else {
+            throw Abort.redirect(to: "/")
+        }
+        let user = try await existingToken.$user.get(on: req.db)
+        try req.session.set("ResetPasswordUser", to: user)
+        try await existingToken.delete(on: req.db)
+        return try await req.view.render("resetPassword", ResetPasswordContext())
+    }
+    
+    func resetPasswordPostHandler(_ req: Request) async throws -> Response {
+        let data = try req.content.decode(ResetPasswordData.self)
+        guard data.password == data.confirmPassword else {
+            return try await req.view.render("resetPassword", ResetPasswordContext(error: true))
+                .encodeResponse(for: req)
+        }
+        let resetPasswordUser = try req.session.get("ResetPasswordUser", as: User.self)
+        req.session.destroy()
+        try await resetPasswordUser.delete(on: req.db)
+        let newPassword = try Bcrypt.hash(data.password)
+        resetPasswordUser.password = newPassword
+        try await resetPasswordUser.save(on: req.db)
+        return req.redirect(to: "/login")
     }
 }
 
@@ -291,7 +378,6 @@ struct CategoryContext: Encodable {
     let acronyms: [Acronym]
 }
 
-// MARK: - Struct Create & Edit Context
 struct CreateAcronymContext: Encodable {
     let title = "Create An Acronym"
     let csrfToken: String
@@ -338,6 +424,26 @@ struct RegisterData: Content {
     let username: String
     let password: String
     let confirmPassword: String
+    let emailAddress: String
+}
+
+struct ForgotPasswordContext: Encodable {
+    let title: String
+    let user: User?
+}
+
+struct ResetPasswordContext: Encodable {
+    let title = "Reset Password"
+    let error: Bool?
+    
+    init(error: Bool? = false) {
+        self.error = error
+    }
+}
+
+struct ResetPasswordData: Content {
+    let password: String
+    let confirmPassword: String
 }
 
 // MARK: - RegisterData
@@ -346,5 +452,6 @@ extension RegisterData: Validatable {
         validations.add("name", as: String.self, is: .ascii)
         validations.add("username", as: String.self, is: .alphanumeric && .count(3...))
         validations.add("password", as: String.self, is: .count(8...))
+        validations.add("emailAddress", as: String.self, is: .email)
     }
 }

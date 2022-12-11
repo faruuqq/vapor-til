@@ -15,7 +15,8 @@ struct CreateAdmin: AsyncMigration {
         let user = User(
             name: "Admin",
             username: "admin",
-            password: passwordHash)
+            password: passwordHash,
+            email: "admin@localhost.local")
         try await user.save(on: database)
     }
     

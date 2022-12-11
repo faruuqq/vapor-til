@@ -42,7 +42,11 @@ final class UserTests: XCTestCase {
     }
     
     func testUserCanBeSavedWithAPI() throws {
-        let user = User(name: usersName, username: usersUsername, password: usersPassword)
+        let user = User(
+            name: usersName,
+            username: usersUsername,
+            password: usersPassword,
+            email: "\(usersUsername)@test.com")
         try app.test(.POST, usersURL, loggedInRequest: true, beforeRequest: { req in
             try req.content.encode(user)
         }, afterResponse: { response in
