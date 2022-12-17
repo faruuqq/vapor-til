@@ -23,6 +23,9 @@ final class User: Model, Content {
     @Field(key: "password")
     var password: String
     
+    @Field(key: "twitterURL")
+    var twitterURL: String?
+    
     @Field(key: "email")
     var email: String
     
@@ -38,12 +41,12 @@ final class User: Model, Content {
          username: String,
          password: String,
          email: String,
-         profilePicture: String? = nil) {
+         twitterURL: String? = nil) {
         self.name = name
         self.username = username
         self.password = password
         self.email = email
-        self.profilePicture = profilePicture
+        self.twitterURL = twitterURL
     }
     
     final class Public: Content {
@@ -57,6 +60,23 @@ final class User: Model, Content {
             self.username = username
         }
     }
+    
+    final class PublicV2: Content {
+        var id: UUID?
+        var name: String
+        var username: String
+        var twitterURL: String?
+        
+        init(id: UUID? = nil,
+             name: String,
+             username: String,
+             twitterURL: String? = nil) {
+            self.id = id
+            self.name = name
+            self.username = username
+            self.twitterURL = twitterURL
+        }
+    }
 }
 
 // MARK: - User
@@ -64,12 +84,24 @@ extension User {
     func convertToPublic() -> User.Public {
         return User.Public(id: id, name: name, username: username)
     }
+    
+    func convertToPublicV2() -> User.PublicV2 {
+        return User.PublicV2(
+            id: id,
+            name: name,
+            username: username,
+            twitterURL: twitterURL)
+    }
 }
 
 // MARK: - Collection
 extension Collection where Element: User {
     func convertToPublic() -> [User.Public] {
         return self.map { $0.convertToPublic() }
+    }
+    
+    func convertToPublicV2() -> [User.PublicV2] {
+        return self.map { $0.convertToPublicV2() }
     }
 }
 

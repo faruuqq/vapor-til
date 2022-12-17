@@ -256,11 +256,17 @@ struct WebsiteController: RouteCollection {
             throw Abort(.badRequest, reason: "Password did not match")
         }
         let password = try Bcrypt.hash(data.password)
+        var twitterURL: String?
+        if let twitter = data.twitterURL,
+           !twitter.isEmpty {
+            twitterURL = twitter
+        }
         let user = User(
             name: data.name,
             username: data.username,
             password: password,
-            email: data.emailAddress)
+            email: data.emailAddress,
+            twitterURL: twitterURL)
         try await user.save(on: req.db)
         req.auth.login(user)
         return req.redirect(to: "/")
@@ -469,6 +475,7 @@ struct RegisterData: Content {
     let password: String
     let confirmPassword: String
     let emailAddress: String
+    let twitterURL: String?
 }
 
 struct ForgotPasswordContext: Encodable {
