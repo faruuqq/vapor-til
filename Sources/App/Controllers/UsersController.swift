@@ -10,6 +10,7 @@ import Vapor
 struct UsersController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
         let usersRoute = routes.grouped("api", "users")
+        let usersV2Route = routes.grouped("api", "V2", "users")
         usersRoute.on(.GET, use: getAllHandler(_:))
         usersRoute.on(.GET, ":userID", use: getHandler(_:))
         usersRoute.on(.GET, ":userID", "acronyms", use: getAcronymsHandler(_:))
@@ -40,6 +41,13 @@ struct UsersController: RouteCollection {
             .find(req.parameters.get("userID"), on: req.db)
         else { throw Abort(.notFound) }
         return user.convertToPublic()
+    }
+    
+    func getV2Handler(_ req: Request) async throws -> User.PublicV2 {
+        guard let user = try await User.find(req.parameters.get("userID"), on: req.db) else {
+            throw Abort(.notFound)
+        }
+        return user.convertToPublicV2()
     }
     
     func getAcronymsHandler(_ req: Request) async throws -> [Acronym] {
