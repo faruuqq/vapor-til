@@ -10,6 +10,8 @@ import Leaf
 import SendGrid
 
 struct WebsiteController: RouteCollection {
+    let imageFolder = "ProfilePictures/"
+    
     func boot(routes: Vapor.RoutesBuilder) throws {
         let authSessionRoutes = routes.grouped(User.sessionAuthenticator())
         authSessionRoutes.on(.GET, "login", use: loginHandler(_:))
@@ -29,6 +31,7 @@ struct WebsiteController: RouteCollection {
         authSessionRoutes.on(.POST, "forgottenPassword", use: forgottenPasswordPostHandler(_:))
         authSessionRoutes.on(.GET, "resetPassword", use: resetPasswordHandler(_:))
         authSessionRoutes.on(.POST, "resetPassword", use: resetPasswordPostHandler(_:))
+        authSessionRoutes.on(.GET, "users", ":userID", "profilePicture", use: getUserProfilePictureHandler(_:))
         
         let protectedRoutes = authSessionRoutes.grouped(User.redirectMiddleware(path: "/login"))
         protectedRoutes.on(.GET, "acronyms", "create", use: createAcronymHandler(_:))
@@ -36,6 +39,8 @@ struct WebsiteController: RouteCollection {
         protectedRoutes.on(.GET, "acronyms", ":acronymID", "edit", use: editAcronymHandler(_:))
         protectedRoutes.on(.POST, "acronyms", ":acronymID", "edit", use: editAcronymPostHandler(_:))
         protectedRoutes.on(.POST, "acronyms", ":acronymID", "delete", use: deleteAcronymHandler(_:))
+        protectedRoutes.on(.GET, "users", ":userID", "addProfilePicture", use: addProfilePictureHandler(_:))
+        protectedRoutes.on(.POST, "users", ":userID", "addProfilePicture", body: .collect(maxSize: "100mb") ,use: addProfilePicturePostHandler(_:))
     }
     
     // MARK: - Function Get Context
@@ -69,10 +74,12 @@ struct WebsiteController: RouteCollection {
     func userHandler(_ req: Request) async throws -> View {
         if let user = try await User.find(req.parameters.get("userID"), on: req.db) {
             let acronyms = try await user.$acronyms.get(on: req.db)
+            let loggedInUser = req.auth.get(User.self)
             let context = UserContext(
                 title: user.name,
                 user: user,
-                acronyms: acronyms)
+                acronyms: acronyms,
+                authenticatedUser: loggedInUser)
             return try await req.view.render("user", context)
         } else {
             throw Abort(.notFound)
@@ -268,10 +275,9 @@ struct WebsiteController: RouteCollection {
     
     func forgottenPasswordPostHandler(_ req: Request) async throws -> View {
         let emailBody = try req.content.get(String.self, at: "email")
-        var user: User?
         guard let user = try await User.query(on: req.db).all()
             .first(where: { $0.email == emailBody }) else {
-            let context = ForgotPasswordContext(title: "Password Reset Email Sent", user: user)
+            let context = ForgotPasswordContext(title: "Password Reset Email Sent", user: nil)
             return try await req.view.render("forgottenPasswordConfirmed", context)
         }
         
@@ -339,6 +345,43 @@ struct WebsiteController: RouteCollection {
         try await resetPasswordUser.save(on: req.db)
         return req.redirect(to: "/login")
     }
+    
+    func addProfilePictureHandler(_ req: Request) async throws -> View {
+        guard let user = try await User.find(req.parameters.get("userID"), on: req.db) else {
+            throw Abort(.notFound)
+        }
+        return try await req.view.render("addProfilePicture", ["title": "Add Profile Picture",
+                                                               "username": user.username])
+    }
+    
+    func addProfilePicturePostHandler(_ req: Request) async throws -> Response {
+        guard let user = try await User.find(req.parameters.get("userID"), on: req.db) else {
+            throw Abort(.notFound)
+        }
+        let imageData = try req.content.decode(ImageUploadData.self)
+        let workPath = req.application.directory.workingDirectory
+        print("--faruuq: workpath is", workPath)
+        let name = try "\(user.requireID())-\(UUID().uuidString).jpg"
+        let path = workPath + imageFolder + name
+        FileManager().createFile(
+            atPath: path,
+            contents: imageData.picture)
+        user.profilePicture = name
+        try await user.save(on: req.db)
+        return req.redirect(to: "/users/\(try user.requireID())")
+    }
+    
+    func getUserProfilePictureHandler(_ req: Request) async throws -> Response {
+        guard let user = try await User.find(req.parameters.get("userID"), on: req.db) else {
+            print("--faruuq: req is")
+            print("--faruuq: user not found")
+            throw Abort(.notFound)
+        }
+        let filename = user.profilePicture ?? "no pict"
+        let path = req.application.directory.workingDirectory + imageFolder + filename
+        print("--faruuq: path is", path)
+        return req.fileio.streamFile(at: path)
+    }
 }
 
 // MARK: - Struct Context
@@ -360,6 +403,7 @@ struct UserContext: Encodable {
     let title: String
     let user: User
     let acronyms: [Acronym]
+    let authenticatedUser: User?
 }
 
 struct AllUsersContext: Encodable {
@@ -444,6 +488,10 @@ struct ResetPasswordContext: Encodable {
 struct ResetPasswordData: Content {
     let password: String
     let confirmPassword: String
+}
+
+struct ImageUploadData: Content {
+    var picture: Data
 }
 
 // MARK: - RegisterData
