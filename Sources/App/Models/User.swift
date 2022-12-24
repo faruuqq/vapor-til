@@ -7,6 +7,7 @@
 
 import Vapor
 import Fluent
+import FluentPostgresDriver
 
 final class User: Model, Content {
     static let schema: String = "users"
@@ -29,8 +30,14 @@ final class User: Model, Content {
     @Field(key: "email")
     var email: String
     
-    @Field(key: "picture")
+    @OptionalField(key: "picture")
     var profilePicture: String?
+    
+    @Timestamp(key: "deleted_at", on: .delete)
+    var deletedAt: Date?
+    
+    @Enum(key: "user_type")
+    var userType: UserType
     
     @Children(for: \.$user)
     var acronyms: [Acronym]
@@ -41,12 +48,14 @@ final class User: Model, Content {
          username: String,
          password: String,
          email: String,
-         twitterURL: String? = nil) {
+         twitterURL: String? = nil,
+         userType: UserType = .standard) {
         self.name = name
         self.username = username
         self.password = password
         self.email = email
         self.twitterURL = twitterURL
+        self.userType = userType
     }
     
     final class Public: Content {
@@ -125,3 +134,16 @@ extension User: ModelSessionAuthenticatable {}
 
 // MARK: - ModelCredentialsAuthenticatable
 extension User: ModelCredentialsAuthenticatable {}
+
+// MARK: - LifecycleHandler
+extension User: AsyncModelMiddleware {
+    typealias Model = User
+    
+    func create(model: User, on db: Database, next: AnyAsyncModelResponder) async throws {
+        let count = try await User.query(on: db).filter(\.$username == model.username).count()
+        guard count == 0 else {
+            throw Abort(.badRequest, reason: "Username already exists")
+        }
+        try await next.create(model, on: db)
+    }
+}

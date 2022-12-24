@@ -16,6 +16,12 @@ final class Acronym: Model {
     @ID
     var id: UUID?
     
+    @Timestamp(key: "created_at", on: .create)
+    var createdAt: Date?
+    
+    @Timestamp(key: "updated_at", on: .update)
+    var updatedAt: Date?
+    
     // key database column (non-optional)
     @Field(key: "short")
     var short: String

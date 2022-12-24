@@ -46,16 +46,18 @@ public func configure(_ app: Application) async throws {
         break
     }
     app.migrations.add(CreateResetPasswordToken())
-    app.migrations.add(AddTwitterToUser())
+//    app.migrations.add(AddTwitterToUser())
+    app.migrations.add(AddDeletedToUser())
+    app.migrations.add(AddTimestampToAcronym())
+    app.migrations.add(AddUserTypeToUser())
     app.migrations.add(MakeCategoriesUnique())
-    
+    app.databases.middleware.use(User(), on: .psql)
     app.logger.logLevel = .debug
     
     try await app.autoMigrate()
 
-    app.sendgrid.initialize()
+//    app.sendgrid.initialize()
     app.views.use(.leaf)
-
     // register routes
     try routes(app)
 }

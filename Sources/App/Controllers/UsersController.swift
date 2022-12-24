@@ -6,14 +6,18 @@
 //
 
 import Vapor
+import Fluent
 
 struct UsersController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
         let usersRoute = routes.grouped("api", "users")
         let usersV2Route = routes.grouped("api", "V2", "users")
+        usersV2Route.on(.GET, use: getV2AllHandler(_:))
+        usersV2Route.on(.GET, ":userID", use: getV2Handler(_:))
         usersRoute.on(.GET, use: getAllHandler(_:))
         usersRoute.on(.GET, ":userID", use: getHandler(_:))
         usersRoute.on(.GET, ":userID", "acronyms", use: getAcronymsHandler(_:))
+        usersRoute.on(.GET, "acronyms", use: getAllUserWithAcronyms(_:))
         
         let basicAuthMiddleware = User.authenticator()
         let basicAuthGroup = usersRoute.grouped(basicAuthMiddleware)
@@ -23,6 +27,9 @@ struct UsersController: RouteCollection {
         let guardAuthMiddleware = User.guardMiddleware()
         let tokenAuthGroup = usersRoute.grouped(tokenAuthMiddleware, guardAuthMiddleware)
         tokenAuthGroup.post(use: createHandler(_:))
+        tokenAuthGroup.delete(":userID", use: deleteHandler(_:))
+        tokenAuthGroup.post(":userID", "restore", use: restoreHandler(_:))
+        tokenAuthGroup.delete(":userID", "force", use: forceDeleteHandler(_:))
     }
     
     func createHandler(_ req: Request) async throws -> User.Public {
@@ -34,6 +41,10 @@ struct UsersController: RouteCollection {
     
     func getAllHandler(_ req: Request) async throws -> [User.Public] {
         try await User.query(on: req.db).all().convertToPublic()
+    }
+    
+    func getV2AllHandler(_ req: Request) async throws -> [User.PublicV2] {
+        try await User.query(on: req.db).all().convertToPublicV2()
     }
     
     func getHandler(_ req: Request) async throws -> User.Public {
@@ -64,4 +75,61 @@ struct UsersController: RouteCollection {
         try await token.save(on: req.db)
         return token
     }
+    
+    func deleteHandler(_ req: Request) async throws -> HTTPStatus {
+        let requestUser = try req.auth.require(User.self)
+        guard requestUser.userType == .admin else {
+            throw Abort(.forbidden)
+        }
+        
+        guard let user = try await User.find(req.parameters.get("userID"), on: req.db) else {
+            throw Abort(.notFound)
+        }
+        
+        try await user.delete(force: false, on: req.db)
+        return .noContent
+    }
+    
+    func restoreHandler(_ req: Request) async throws -> HTTPStatus {
+        guard let userID = req.parameters.get("userID"),
+              let userUUID = UUID(uuidString: userID) else {
+            throw Abort(.badRequest)
+        }
+        let users = try await User.query(on: req.db).withDeleted().all()
+        guard let user = users.filter({ $0.id == userUUID }).first else {
+            throw Abort(.notFound)
+        }
+        try await user.restore(on: req.db)
+        return .ok
+    }
+    
+    func forceDeleteHandler(_ req: Request) async throws -> HTTPStatus {
+        guard let user = try await User.find(req.parameters.get("userID"), on: req.db) else {
+            throw Abort(.notFound)
+        }
+        try await user.delete(force: true, on: req.db)
+        return .noContent
+    }
+    
+    func getAllUserWithAcronyms(_ req: Request) async throws -> [UserWithAcronyms] {
+        let users = try await User.query(on: req.db).all()
+        let userWithAcronyms = try users.compactMap { user in
+            try user.$acronyms.query(on: req.db).all().map { acronyms in
+                UserWithAcronyms(
+                    id: user.id,
+                    name: user.name,
+                    username: user.username,
+                    acronyms: acronyms)
+                
+            }.wait()
+        }
+        return userWithAcronyms
+    }
+}
+
+struct UserWithAcronyms: Content {
+    let id: UUID?
+    let name: String
+    let username: String
+    let acronyms: [Acronym]
 }
