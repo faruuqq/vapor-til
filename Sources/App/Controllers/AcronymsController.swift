@@ -7,6 +7,7 @@
 
 import Vapor
 import Fluent
+import FluentSQL
 
 struct AcronymsController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
@@ -18,6 +19,9 @@ struct AcronymsController: RouteCollection {
         acronymsRoutes.on(.GET, "sorted", use: sortingHandler(_:))
         acronymsRoutes.on(.GET, ":acronymID", "user", use: getUserHandler(_:))
         acronymsRoutes.on(.GET, ":acronymID", "categories", use: getCategoriesHandler(_:))
+        acronymsRoutes.on(.GET, "mostRecent", use: getMostRecentAcronyms(_:))
+        acronymsRoutes.on(.GET, "users", use: getAcronymsWithUser(_:))
+        acronymsRoutes.on(.GET, "raw", use: getAllAcronymsRaw(_:))
         
         let tokenAuthMiddleware = Token.authenticator()
         let guardAuthMiddleware = User.guardMiddleware()
@@ -137,10 +141,44 @@ struct AcronymsController: RouteCollection {
         try await acronymQuery.$categories.detach(categoryQuery, on: req.db)
         return .noContent
     }
+    
+    func getMostRecentAcronyms(_ req: Request) async throws -> [Acronym] {
+        let acronyms = try await Acronym.query(on: req.db).sort(\.$updatedAt, .descending).all()
+        return acronyms
+    }
+    
+    func getAcronymsWithUser(_ req: Request) async throws -> [AcronymWithUser] {
+        let acronyms = try await Acronym.query(on: req.db).join(User.self, on: \Acronym.$user.$id == \User.$id).all()
+        let acronymWithUser = try acronyms.map { acronym in
+            let user = try acronym.joined(User.self)
+            return AcronymWithUser(
+                id: acronym.id,
+                short: acronym.short,
+                long: acronym.long,
+                user: user.convertToPublic())
+        }
+        return acronymWithUser
+    }
+    
+    func getAllAcronymsRaw(_ req: Request) async throws -> [Acronym] {
+        guard let sql = req.db as? SQLDatabase else {
+            throw Abort(.badRequest)
+        }
+        
+        let acronyms = try await sql.raw("SELECT * FROM acronyms").all(decoding: Acronym.self)
+        return acronyms
+    }
 
 }
 
 struct CreateAcronymData: Content {
     let short: String
     let long: String
+}
+
+struct AcronymWithUser: Content {
+    let id: UUID?
+    let short: String
+    let long: String
+    let user: User.Public
 }

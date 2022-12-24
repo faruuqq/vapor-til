@@ -16,6 +16,7 @@ struct CreateUser: AsyncMigration {
             .field("password", .string, .required)
             .field("email", .string, .required)
             .field("picture", .string)
+            .field("twitterURL", .string)
             .unique(on: "username")
             .unique(on: "email")
             .create()
